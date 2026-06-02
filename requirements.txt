@@ -1,0 +1,5 @@
+streamlit
+pandas
+matplotlib
+akshare>=1.12.0
+yfinance
