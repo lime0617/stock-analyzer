@@ -13,12 +13,12 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 
 st.title("🚀 股票量价智能分析器")
-st.markdown("**近30日量价 + 板块 + 大白话解读 + 买卖建议**")
+st.markdown("**近30日量价 + 板块 + 十大股东 + 机构持仓 + 大白话解读**")
 
 with st.sidebar:
     st.header("分析设置")
     user_input = st.text_input("股票名称或代码", value="000768", help="支持名称（如中航西飞）或代码")
-    analyze_button = st.button("🚀 开始分析", type="primary")
+    analyze_button = st.button("🚀 开始全景分析", type="primary")
 
 @st.cache_data(ttl=300)
 def get_stock_data(symbol):
@@ -29,28 +29,55 @@ def get_stock_data(symbol):
         return None
 
 def get_stock_sector(code):
-    """获取所属板块（增强兼容性）"""
+    """获取所属板块"""
     try:
         pure_code = code.split('.')[0]
         info = ak.stock_individual_info_em(symbol=pure_code)
-        
         if not info.empty:
-            # 尝试匹配常见字段名
             possible_names = ['所属行业', '行业', '所属板块', '板块', '主营业务']
             for name in possible_names:
                 sector_row = info[info['item'].str.contains(name, na=False, regex=False)]
                 if not sector_row.empty:
                     return sector_row['value'].values[0]
-            
-            # 如果都没匹配到，返回第一条有意义的信息
             return info.iloc[0]['value'] if len(info) > 0 else "未知板块"
-        
         return "未知板块"
-    except Exception as e:
-        return f"获取失败"
+    except:
+        return "未知板块"
+
+def get_top10_shareholders(code):
+    """获取十大股东"""
+    try:
+        pure_code = code.split('.')[0]
+        df = ak.stock_gdfx_top_10_em(symbol=pure_code)
+        if not df.empty:
+            # 只保留最新一期
+            latest_date = df['公告日'].max()
+            df_latest = df[df['公告日'] == latest_date][['股东名称', '持股数(万股)', '持股比例(%)', '增减']]
+            return df_latest.head(10)
+        return None
+    except:
+        return None
+
+def get_institution_hold(code):
+    """获取机构持仓（最新季度）"""
+    try:
+        pure_code = code.split('.')[0]
+        df = ak.stock_institution_hold(symbol=pure_code)
+        if not df.empty:
+            # 取最新一期
+            latest = df.iloc[0]
+            return {
+                '季度': latest.get('季度', '未知'),
+                '机构数': latest.get('机构数', '未知'),
+                '持股数(万股)': latest.get('持股数', '未知'),
+                '持股比例(%)': latest.get('持股比例', '未知')
+            }
+        return None
+    except:
+        return None
 
 if analyze_button and user_input:
-    with st.spinner(f"正在分析 {user_input}..."):
+    with st.spinner(f"正在进行 {user_input} 全景分析..."):
         try:
             # 自动处理名称/代码
             symbol = user_input
@@ -95,8 +122,10 @@ if analyze_button and user_input:
                 score += 1.5
             final_score = min(10, max(1, round(score, 1)))
 
-            # 获取板块
+            # 获取板块 + 股东 + 机构
             sector = get_stock_sector(symbol)
+            top10_df = get_top10_shareholders(symbol)
+            inst_hold = get_institution_hold(symbol)
 
             # ==================== 展示 ====================
             col1, col2, col3 = st.columns(3)
@@ -125,9 +154,31 @@ if analyze_button and user_input:
             fig.update_layout(height=800)
             st.plotly_chart(fig, use_container_width=True)
 
-            # 板块信息
+            # 板块
             st.subheader("🏭 所属板块")
             st.info(f"**{sector}**")
+
+            # 十大股东
+            st.subheader("👥 十大股东（最新一期）")
+            if top10_df is not None and not top10_df.empty:
+                st.dataframe(top10_df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("暂未获取到十大股东数据")
+
+            # 机构持仓
+            st.subheader("🏦 机构持仓（最新季度）")
+            if inst_hold:
+                col_a, col_b, col_c, col_d = st.columns(4)
+                with col_a:
+                    st.metric("季度", inst_hold.get('季度', '未知'))
+                with col_b:
+                    st.metric("机构数", inst_hold.get('机构数', '未知'))
+                with col_c:
+                    st.metric("持股数(万股)", inst_hold.get('持股数(万股)', '未知'))
+                with col_d:
+                    st.metric("持股比例(%)", inst_hold.get('持股比例(%)', '未知'))
+            else:
+                st.warning("暂未获取到机构持仓数据")
 
             # 筹码分布
             st.subheader("🧿 筹码分布图（近似）")
