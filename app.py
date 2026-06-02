@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 
 st.title("🚀 股票量价智能分析器")
-st.markdown("**支持A股 · 美股 · 成交量异常检测**")
+st.markdown("**支持A股 · 美股 | 成交量异常检测**")
 
 with st.sidebar:
     st.header("分析设置")
@@ -22,25 +22,31 @@ with st.sidebar:
 
 if analyze_button and symbol:
     with st.spinner(f"正在获取 {symbol} 数据..."):
-        df = None
         try:
-            # 优先尝试 A股，失败则用其他方式
+            df = None
+            
+            # A股优先使用 akshare，重试多次
             if any(x in symbol.upper() for x in ['.SZ','.SH','000','600','300','688']):
-                st.info("正在尝试获取A股数据...")
-                for attempt in range(4):
+                st.info("正在获取A股数据（可能需要等待）...")
+                for attempt in range(6):
                     try:
                         df = ak.stock_zh_a_hist(symbol=symbol[:6], period="daily", 
-                                              start_date=(datetime.now()-timedelta(days=days+60)).strftime('%Y%m%d'))
-                        break
+                                              start_date=(datetime.now()-timedelta(days=days+120)).strftime('%Y%m%d'))
+                        if len(df) > 5:
+                            break
                     except:
-                        time.sleep(2)
+                        time.sleep(2.5)
             else:
                 df = yf.Ticker(symbol).history(period=f"{days+60}d")
             
-            if df is None or len(df) < 5:
-                # 备用方案
-                st.info("尝试备用数据源...")
-                df = yf.Ticker(symbol).history(period=f"{days+60}d")
+            # 备用方案：强制使用 yfinance
+            if df is None or len(df) < 10:
+                st.info("切换备用数据源...")
+                # 把A股代码转为 yfinance 格式
+                yf_symbol = symbol
+                if any(x in symbol.upper() for x in ['.SZ','.SH']):
+                    yf_symbol = symbol.replace('.SZ','.SS').replace('.SH','.SS')
+                df = yf.Ticker(yf_symbol).history(period=f"{days+60}d")
             
             df = df.tail(days).copy()
             
@@ -72,7 +78,7 @@ if analyze_button and symbol:
             
             st.pyplot(fig)
             
-            # 结果
+            # 结果展示
             latest = df.iloc[-1]
             st.metric("最新价格", f"{latest['Close']:.2f}")
             change = (latest['Close'] / df.iloc[0]['Close'] - 1) * 100
@@ -83,10 +89,10 @@ if analyze_button and symbol:
                 st.warning(f"🚨 发现 {len(anomalies)} 天成交量异常")
                 st.dataframe(anomalies[['Close', 'Volume', 'Anomaly']])
             else:
-                st.success("✅ 近期成交量正常")
+                st.success("✅ 近期成交量表现正常")
                 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:80]}...")
-            st.info("建议尝试美股代码：AAPL、TSLA")
+            st.error(f"分析失败: {str(e)[:100]}...")
+            st.info("建议尝试美股（如 AAPL），或几分钟后重试")
 
 st.caption("由 Grok 构建 | 数据来源: akshare + yfinance")
