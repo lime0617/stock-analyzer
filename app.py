@@ -14,19 +14,55 @@ st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon=
 
 st.title("🚀 股票量价智能分析器（专业版）")
 
+# ==================== 辅助函数（全局定义） ====================
+def get_symbol(user_input):
+    if any(x in user_input.upper() for x in ['.SZ', '.SH', '.SS']):
+        return user_input
+    try:
+        code_df = ak.stock_info_a_code_name()
+        match = code_df[code_df['name'].str.contains(user_input, na=False)]
+        if not match.empty:
+            code = match.iloc[0]['code']
+            return f"{code}.SZ" if code.startswith(('0', '3')) else f"{code}.SS"
+    except:
+        pass
+    return user_input
+
+def calculate_macd(df):
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=9, adjust=False).mean()
+    hist = macd - signal
+    return macd, signal, hist
+
+def calculate_kdj(df, n=9):
+    low_min = df['Low'].rolling(window=n).min()
+    high_max = df['High'].rolling(window=n).max()
+    rsv = (df['Close'] - low_min) / (high_max - low_min) * 100
+    k = rsv.ewm(com=2, adjust=False).mean()
+    d = k.ewm(com=2, adjust=False).mean()
+    j = 3 * k - 2 * d
+    return k, d, j
+
+def calculate_bbands(df, window=20):
+    sma = df['Close'].rolling(window=window).mean()
+    std = df['Close'].rolling(window=window).std()
+    upper = sma + (std * 2)
+    lower = sma - (std * 2)
+    return sma, upper, lower
+
+# ==================== 侧边栏 ====================
 with st.sidebar:
     st.header("分析设置")
     
-    # 新增开关
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
     
     if not compare_mode:
-        # 单只分析模式
         user_input = st.text_input("股票名称或代码", value="300058", help="支持名称搜索")
         days = st.slider("分析天数", min_value=3, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始专业分析", type="primary")
     else:
-        # 多只对比模式
         st.info("当前为多只股票对比模式")
         compare_input = st.text_area(
             "请输入多只股票（每行一个）", 
@@ -39,15 +75,14 @@ with st.sidebar:
 if not compare_mode and analyze_button and user_input:
     with st.spinner(f"正在分析 {user_input}（近{days}日）..."):
         try:
-            symbol = get_symbol(user_input)  # 复用名称转代码函数
-            
+            symbol = get_symbol(user_input)
             df = yf.Ticker(symbol).history(period=f"{days + 40}d").tail(days).copy()
 
             if len(df) < max(10, days // 3):
                 st.error("数据不足")
                 st.stop()
 
-            # 计算指标（MACD、KDJ、布林带等）
+            # 计算指标
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA10'] = df['Close'].rolling(10).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
@@ -90,7 +125,7 @@ if not compare_mode and analyze_button and user_input:
             if latest_vp == '价涨量增': score += 1.5
             final_score = min(10, max(1, round(score, 1)))
 
-            # ==================== 图表 ====================
+            # 图表
             fig = make_subplots(rows=4, cols=1, 
                               subplot_titles=(f"价格 + 布林带（近{days}日）", "MACD", "KDJ", "成交量"),
                               row_heights=[0.35, 0.25, 0.2, 0.2])
@@ -117,7 +152,7 @@ if not compare_mode and analyze_button and user_input:
             fig.update_layout(height=1100, title_text=f"{user_input} 近{days}日量价 + 技术指标分析")
             st.plotly_chart(fig, use_container_width=True)
 
-            # 结构化报告（省略部分代码，保持之前风格）
+            # 报告
             st.subheader("📋 专业分析报告")
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("最新价格", f"{latest['Close']:.2f}")
@@ -158,10 +193,8 @@ if compare_mode and compare_button:
                     
                     if len(hist) > 30:
                         close = hist['Close'].tail(90)
-                        # 归一化价格
                         compare_data[stock] = (close / close.iloc[0] * 100).round(2)
                         
-                        # 计算指标
                         ret = (close.iloc[-1] / close.iloc[0] - 1) * 100
                         vol = close.pct_change().std() * 100
                         mdd = ((close / close.cummax()) - 1).min() * 100
@@ -175,7 +208,6 @@ if compare_mode and compare_button:
                 if compare_data:
                     compare_df = pd.DataFrame(compare_data)
                     
-                    # 归一化价格对比图
                     st.subheader("归一化价格走势对比（起点=100）")
                     fig = go.Figure()
                     for col in compare_df.columns:
@@ -183,7 +215,6 @@ if compare_mode and compare_button:
                     fig.update_layout(height=500, title="多只股票归一化价格对比")
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # 指标对比表
                     st.subheader("关键指标对比（近90日）")
                     metrics_df = pd.DataFrame(metrics).T
                     st.dataframe(metrics_df.style.highlight_max(axis=0), use_container_width=True)
