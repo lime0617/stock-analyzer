@@ -29,17 +29,25 @@ def get_stock_data(symbol):
         return None
 
 def get_stock_sector(code):
-    """获取所属板块"""
+    """获取所属板块（增强兼容性）"""
     try:
         pure_code = code.split('.')[0]
         info = ak.stock_individual_info_em(symbol=pure_code)
+        
         if not info.empty:
-            sector_row = info[info['item'] == '所属行业']
-            if not sector_row.empty:
-                return sector_row['value'].values[0]
+            # 尝试匹配常见字段名
+            possible_names = ['所属行业', '行业', '所属板块', '板块', '主营业务']
+            for name in possible_names:
+                sector_row = info[info['item'].str.contains(name, na=False, regex=False)]
+                if not sector_row.empty:
+                    return sector_row['value'].values[0]
+            
+            # 如果都没匹配到，返回第一条有意义的信息
+            return info.iloc[0]['value'] if len(info) > 0 else "未知板块"
+        
         return "未知板块"
-    except:
-        return "未知板块"
+    except Exception as e:
+        return f"获取失败"
 
 if analyze_button and user_input:
     with st.spinner(f"正在分析 {user_input}..."):
