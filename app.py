@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yfinance as yf
+import akshare as ak
 from datetime import datetime, timedelta
 import warnings
 import numpy as np
@@ -16,18 +17,43 @@ st.markdown("**近30日量价分析 | 大白话解读 + 买卖建议**")
 
 with st.sidebar:
     st.header("分析设置")
-    user_input = st.text_input("股票名称或代码", value="000768.SZ", help="支持名称搜索，如：中航西飞、贵州茅台")
+    user_input = st.text_input("股票名称或代码", value="000768", help="支持名称搜索，如：中航西飞、贵州茅台、苹果")
     analyze_button = st.button("🚀 开始分析", type="primary")
+
+def get_symbol(user_input):
+    """名称转代码（更可靠的版本）"""
+    # 如果已经是带后缀的代码，直接返回
+    if any(x in user_input.upper() for x in ['.SZ', '.SH', '.SS']):
+        return user_input
+    
+    try:
+        # 使用 akshare 搜索名称
+        code_df = ak.stock_info_a_code_name()
+        match = code_df[code_df['name'].str.contains(user_input, na=False)]
+        if not match.empty:
+            code = match.iloc[0]['code']
+            if code.startswith(('0', '3')):
+                return f"{code}.SZ"
+            else:
+                return f"{code}.SS"
+    except:
+        pass
+    
+    # 没找到就直接用原输入（可能是美股代码）
+    return user_input
 
 if analyze_button and user_input:
     with st.spinner(f"正在分析 {user_input}..."):
         try:
+            # 获取正确代码
+            symbol = get_symbol(user_input)
+            
             # 获取数据
-            df = yf.Ticker(user_input).history(period="60d")
+            df = yf.Ticker(symbol).history(period="60d")
             df = df.tail(30).copy()
             
             if len(df) < 20:
-                st.error("数据不足，请尝试其他股票")
+                st.error("数据不足，请尝试其他股票或检查名称是否正确")
                 st.stop()
 
             # 计算指标
@@ -58,9 +84,9 @@ if analyze_button and user_input:
             final_score = min(10, max(1, round(score, 1)))
 
             # ==================== 主图表 ====================
-            st.subheader(f"{user_input} 近30日量价分析")
+            st.subheader(f"{user_input}（{symbol}）近30日量价分析")
             
-            fig = make_subplots(rows=3, cols=1, 
+            fig = make_subplots(rows=3, cols=1,
                               subplot_titles=("价格走势", "成交量", "RSI指标"),
                               row_heights=[0.45, 0.3, 0.25], vertical_spacing=0.1)
 
@@ -92,7 +118,7 @@ if analyze_button and user_input:
                 chip[digitized[i]-1] += volumes.iloc[i]
             
             fig_chip = go.Figure(go.Bar(x=bins, y=chip, marker_color='coral'))
-            fig_chip.update_layout(title="成交量在不同价格区间的集中度", 
+            fig_chip.update_layout(title="成交量在不同价格区间的集中度",
                                  xaxis_title="股价区间", yaxis_title="成交量权重", height=400)
             st.plotly_chart(fig_chip, use_container_width=True)
 
@@ -118,4 +144,4 @@ if analyze_button and user_input:
         except Exception as e:
             st.error(f"分析失败: {str(e)[:100]}...")
 
-st.caption("由 Grok 构建 | 支持名称或代码输入 | 仅供参考")
+st.caption("由 Grok 构建 | 支持名称搜索 | 仅供参考")
