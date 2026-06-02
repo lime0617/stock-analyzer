@@ -1,17 +1,11 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import akshare as ak
 import yfinance as yf
+import akshare as ak
 from datetime import datetime, timedelta
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-import os
-import warnings
 import time
+import warnings
 
 warnings.filterwarnings('ignore')
 
@@ -22,39 +16,36 @@ st.markdown("**支持A股 · 美股 · 成交量异常检测**")
 
 with st.sidebar:
     st.header("分析设置")
-    symbol = st.text_input("股票代码", value="000768")
+    symbol = st.text_input("股票代码", value="000768", help="A股: 000768 或 600519\n美股: AAPL 或 TSLA")
     days = st.slider("分析天数", 10, 90, 30)
-    enable_email = st.checkbox("发送邮件报告", value=False)
-    to_email = st.text_input("接收邮箱", value="19129547967@163.com")
-    
     analyze_button = st.button("开始分析", type="primary")
 
-# ====================== 主逻辑 ======================
 if analyze_button and symbol:
-    with st.spinner(f"正在分析 {symbol}..."):
+    with st.spinner(f"正在获取 {symbol} 数据..."):
+        df = None
         try:
-            # 数据获取（带重试）
-            df = None
-            for attempt in range(5):
-                try:
-                    if any(x in symbol.upper() for x in ['.SZ','.SH','000','600','300','688']):
+            # 优先尝试 A股，失败则用其他方式
+            if any(x in symbol.upper() for x in ['.SZ','.SH','000','600','300','688']):
+                st.info("正在尝试获取A股数据...")
+                for attempt in range(4):
+                    try:
                         df = ak.stock_zh_a_hist(symbol=symbol[:6], period="daily", 
-                                              start_date=(datetime.now()-timedelta(days=days+90)).strftime('%Y%m%d'))
-                        df = df.rename(columns={'日期':'Date', '收盘':'Close', '成交量':'Volume'})
-                        df['Date'] = pd.to_datetime(df['Date'])
-                        df = df.set_index('Date')
-                    else:
-                        df = yf.Ticker(symbol).history(period=f"{days+60}d")
-                    df = df.tail(days).copy()
-                    break
-                except:
-                    if attempt < 4:
-                        time.sleep(3)
-                    else:
-                        raise
+                                              start_date=(datetime.now()-timedelta(days=days+60)).strftime('%Y%m%d'))
+                        break
+                    except:
+                        time.sleep(2)
+            else:
+                df = yf.Ticker(symbol).history(period=f"{days+60}d")
+            
+            if df is None or len(df) < 5:
+                # 备用方案
+                st.info("尝试备用数据源...")
+                df = yf.Ticker(symbol).history(period=f"{days+60}d")
+            
+            df = df.tail(days).copy()
             
             if len(df) < 5:
-                st.error("无法获取足够数据，请稍后重试")
+                st.error("数据获取失败，请稍后再试")
                 st.stop()
 
             # 计算指标
@@ -64,11 +55,11 @@ if analyze_button and symbol:
             
             vol_mean = df['Volume'].mean()
             df['Anomaly'] = '正常'
-            df.loc[(df['Volume'] > vol_mean * 2), 'Anomaly'] = '🔴 显著放量'
+            df.loc[df['Volume'] > vol_mean * 2, 'Anomaly'] = '🔴 显著放量'
             
             # 绘图
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-            ax1.plot(df.index, df['Close'], label='收盘价')
+            ax1.plot(df.index, df['Close'], label='收盘价', linewidth=2)
             ax1.plot(df.index, df['MA5'], label='MA5')
             ax1.plot(df.index, df['MA10'], label='MA10')
             ax1.plot(df.index, df['MA20'], label='MA20')
@@ -81,7 +72,7 @@ if analyze_button and symbol:
             
             st.pyplot(fig)
             
-            # 结果展示
+            # 结果
             latest = df.iloc[-1]
             st.metric("最新价格", f"{latest['Close']:.2f}")
             change = (latest['Close'] / df.iloc[0]['Close'] - 1) * 100
@@ -89,13 +80,13 @@ if analyze_button and symbol:
             
             anomalies = df[df['Anomaly'] != '正常']
             if not anomalies.empty:
-                st.warning(f"发现 {len(anomalies)} 天成交量异常")
+                st.warning(f"🚨 发现 {len(anomalies)} 天成交量异常")
                 st.dataframe(anomalies[['Close', 'Volume', 'Anomaly']])
-            
-            st.success("分析完成！")
-            
+            else:
+                st.success("✅ 近期成交量正常")
+                
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:100]}...")
-            st.info("建议：尝试美股 AAPL 或稍等几分钟再试")
+            st.error(f"分析失败: {str(e)[:80]}...")
+            st.info("建议尝试美股代码：AAPL、TSLA")
 
 st.caption("由 Grok 构建 | 数据来源: akshare + yfinance")
