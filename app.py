@@ -100,7 +100,21 @@ if not compare_mode and analyze_button and user_input:
             df.loc[df['Volume'] < vol_mean - 1.5*vol_std, 'Vol_Anomaly'] = '缩量异常'
 
             latest = df.iloc[-1]
-
+# ==================== 热门概念标签（新增） ====================
+try:
+    # 注意：symbol 已经是带 .SZ / .SS 的格式，需要转成 SZ300058 这种
+    clean_symbol = symbol.replace('.SZ', 'SZ').replace('.SS', 'SH').replace('.SH', 'SH')
+    hot_kw_df = ak.stock_hot_keyword_em(symbol=clean_symbol)
+    if not hot_kw_df.empty:
+        # 取前 5 个热门概念
+        top_concepts = hot_kw_df.head(5)['关键词'].tolist() if '关键词' in hot_kw_df.columns else hot_kw_df.head(5).iloc[:, 0].tolist()
+        st.markdown(
+            f"**🔥 当前热门概念**：{', '.join(top_concepts)}",
+            help="数据来源：东方财富个股人气榜关键词"
+        )
+except Exception as e:
+    # 静默失败，不影响主流程
+    pass
             # 量价形态统计
             vp_types = []
             for i in range(1, len(df)):
