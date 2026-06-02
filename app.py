@@ -99,23 +99,31 @@ if not compare_mode and analyze_button and user_input:
 
             latest = df.iloc[-1]
 
-            # ==================== 热门概念标签（已集成） ====================
+            # ==================== 热门概念标签（调试版） ====================
             try:
                 clean_symbol = symbol.upper().replace('.SZ', 'SZ').replace('.SS', 'SH').replace('.SH', 'SH')
                 hot_kw_df = ak.stock_hot_keyword_em(symbol=clean_symbol)
-                if not hot_kw_df.empty:
+                
+                if hot_kw_df is not None and not hot_kw_df.empty:
+                    st.write("**调试信息**：hot_kw_df 列名 =", list(hot_kw_df.columns))
+                    st.write("**调试信息**：前5行数据 =", hot_kw_df.head())
+                    
                     if '关键词' in hot_kw_df.columns:
                         top_concepts = hot_kw_df.head(5)['关键词'].tolist()
                     elif '概念名称' in hot_kw_df.columns:
                         top_concepts = hot_kw_df.head(5)['概念名称'].tolist()
                     else:
                         top_concepts = hot_kw_df.head(5).iloc[:, 0].tolist()
+                    
                     st.markdown(
                         f"**🔥 当前热门概念**：{', '.join(top_concepts)}",
-                        help="数据来源：东方财富个股人气榜关键词（实时更新）"
+                        help="数据来源：东方财富个股人气榜关键词"
                     )
-            except Exception:
-                pass
+                else:
+                    st.info("该股票暂无热门概念数据")
+                    
+            except Exception as e:
+                st.error(f"获取热门概念失败: {str(e)}")
 
             # 量价形态统计
             vp_types = []
