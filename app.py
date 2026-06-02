@@ -44,10 +44,12 @@ def get_stock_sector(code):
         return "未知板块"
 
 def get_top10_shareholders(code):
+    """十大股东（使用更稳定的接口）"""
     try:
         pure_code = code.split('.')[0]
-        df = ak.stock_gdfx_top_10_em(symbol=pure_code)
-        if not df.empty:
+        # 优先使用自由流通股十大股东
+        df = ak.stock_gdfx_free_top_10_em(symbol=pure_code)
+        if df is not None and not df.empty:
             latest_date = df['公告日'].max()
             df_latest = df[df['公告日'] == latest_date][['股东名称', '持股数(万股)', '持股比例(%)', '增减']]
             return df_latest.head(10)
@@ -56,13 +58,14 @@ def get_top10_shareholders(code):
         return None
 
 def get_institution_hold(code):
+    """机构持仓（最新季度）"""
     try:
         pure_code = code.split('.')[0]
-        df = ak.stock_institution_hold(symbol=pure_code)
-        if not df.empty:
+        df = ak.stock_institution_hold_detail(symbol=pure_code)
+        if df is not None and not df.empty:
             latest = df.iloc[0]
             return {
-                '季度': latest.get('季度', '未知'),
+                '季度': latest.get('报告期', '未知'),
                 '机构数': latest.get('机构数', '未知'),
                 '持股数(万股)': latest.get('持股数', '未知'),
                 '持股比例(%)': latest.get('持股比例', '未知')
@@ -72,7 +75,7 @@ def get_institution_hold(code):
         return None
 
 def get_limit_up_stats(code, days=90):
-    """近90日涨停统计 + 次日表现"""
+    """近90日涨停统计"""
     try:
         pure_code = code.split('.')[0]
         df = ak.stock_zh_a_hist(symbol=pure_code, period="daily", adjust="qfq")
@@ -89,22 +92,23 @@ def get_limit_up_stats(code, days=90):
                 next_ret = df.iloc[idx + 1]['涨跌幅']
                 next_day_perf.append(next_ret)
         
-        avg_next_day = np.mean(next_day_perf) if next_day_perf else 0
+        avg_next = round(np.mean(next_day_perf), 2) if next_day_perf else 0
+        up_prob = round(sum(1 for x in next_day_perf if x > 0) / len(next_day_perf) * 100, 1) if next_day_perf else 0
         
         return {
             '涨停次数': limit_up_count,
-            '次日平均涨跌幅': round(avg_next_day, 2),
-            '次日上涨概率': round(sum(1 for x in next_day_perf if x > 0) / len(next_day_perf) * 100, 1) if next_day_perf else 0
+            '次日平均涨跌幅': avg_next,
+            '次日上涨概率': up_prob
         }
     except:
         return None
 
 def get_financial_summary(code):
-    """年报关键指标摘要"""
+    """年报关键指标"""
     try:
         pure_code = code.split('.')[0]
         df = ak.stock_financial_abstract(symbol=pure_code)
-        if not df.empty:
+        if df is not None and not df.empty:
             latest = df.iloc[0]
             return {
                 '报告期': latest.get('报告期', '未知'),
@@ -118,11 +122,11 @@ def get_financial_summary(code):
         return None
 
 def get_holder_change(code):
-    """最近增减持情况"""
+    """最近增减持"""
     try:
         pure_code = code.split('.')[0]
         df = ak.stock_gdfx_free_holding_change_em(symbol=pure_code)
-        if not df.empty:
+        if df is not None and not df.empty:
             return df.head(5)[['股东名称', '增减持股数(万股)', '增减持股比例(%)', '增减持开始日']]
         return None
     except:
@@ -173,7 +177,7 @@ if analyze_button and user_input:
                 score += 1.5
             final_score = min(10, max(1, round(score, 1)))
 
-            # 获取各项数据
+            # 获取数据
             sector = get_stock_sector(symbol)
             top10_df = get_top10_shareholders(symbol)
             inst_hold = get_institution_hold(symbol)
@@ -217,7 +221,7 @@ if analyze_button and user_input:
             if top10_df is not None and not top10_df.empty:
                 st.dataframe(top10_df, use_container_width=True, hide_index=True)
             else:
-                st.warning("暂未获取到十大股东数据")
+                st.warning("暂未获取到十大股东数据（可能需稍后重试）")
 
             # 机构持仓
             st.subheader("🏦 机构持仓（最新季度）")
@@ -228,7 +232,7 @@ if analyze_button and user_input:
                 with col_c: st.metric("持股数(万股)", inst_hold.get('持股数(万股)', '未知'))
                 with col_d: st.metric("持股比例(%)", inst_hold.get('持股比例(%)', '未知'))
             else:
-                st.warning("暂未获取到机构持仓数据")
+                st.warning("暂未获取到机构持仓数据（可能需稍后重试）")
 
             # 涨停统计
             st.subheader("📈 近90日涨停统计")
