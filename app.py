@@ -11,7 +11,6 @@ from collections import Counter
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
-
 st.title("🚀 股票量价智能分析器（专业版）")
 
 # ==================== 辅助函数 ====================
@@ -56,7 +55,7 @@ def calculate_bbands(df, window=20):
 with st.sidebar:
     st.header("分析设置")
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
-    
+   
     if not compare_mode:
         user_input = st.text_input("股票名称或代码", value="300058", help="支持名称搜索")
         days = st.slider("分析天数", min_value=3, max_value=180, value=30, step=1)
@@ -72,7 +71,6 @@ if not compare_mode and analyze_button and user_input:
         try:
             symbol = get_symbol(user_input)
             df = yf.Ticker(symbol).history(period=f"{days + 40}d").tail(days).copy()
-
             if len(df) < max(10, days // 3):
                 st.error("数据不足")
                 st.stop()
@@ -84,7 +82,7 @@ if not compare_mode and analyze_button and user_input:
             df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df)
             df['K'], df['D'], df['J'] = calculate_kdj(df)
             df['BB_Middle'], df['BB_Upper'], df['BB_Lower'] = calculate_bbands(df)
-            
+
             # RSI
             delta = df['Close'].diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
@@ -100,21 +98,25 @@ if not compare_mode and analyze_button and user_input:
             df.loc[df['Volume'] < vol_mean - 1.5*vol_std, 'Vol_Anomaly'] = '缩量异常'
 
             latest = df.iloc[-1]
-# ==================== 热门概念标签（新增） ====================
-try:
-    # 注意：symbol 已经是带 .SZ / .SS 的格式，需要转成 SZ300058 这种
-    clean_symbol = symbol.replace('.SZ', 'SZ').replace('.SS', 'SH').replace('.SH', 'SH')
-    hot_kw_df = ak.stock_hot_keyword_em(symbol=clean_symbol)
-    if not hot_kw_df.empty:
-        # 取前 5 个热门概念
-        top_concepts = hot_kw_df.head(5)['关键词'].tolist() if '关键词' in hot_kw_df.columns else hot_kw_df.head(5).iloc[:, 0].tolist()
-        st.markdown(
-            f"**🔥 当前热门概念**：{', '.join(top_concepts)}",
-            help="数据来源：东方财富个股人气榜关键词"
-        )
-except Exception as e:
-    # 静默失败，不影响主流程
-    pass
+
+            # ==================== 热门概念标签（已集成） ====================
+            try:
+                clean_symbol = symbol.upper().replace('.SZ', 'SZ').replace('.SS', 'SH').replace('.SH', 'SH')
+                hot_kw_df = ak.stock_hot_keyword_em(symbol=clean_symbol)
+                if not hot_kw_df.empty:
+                    if '关键词' in hot_kw_df.columns:
+                        top_concepts = hot_kw_df.head(5)['关键词'].tolist()
+                    elif '概念名称' in hot_kw_df.columns:
+                        top_concepts = hot_kw_df.head(5)['概念名称'].tolist()
+                    else:
+                        top_concepts = hot_kw_df.head(5).iloc[:, 0].tolist()
+                    st.markdown(
+                        f"**🔥 当前热门概念**：{', '.join(top_concepts)}",
+                        help="数据来源：东方财富个股人气榜关键词（实时更新）"
+                    )
+            except Exception:
+                pass
+
             # 量价形态统计
             vp_types = []
             for i in range(1, len(df)):
@@ -130,7 +132,7 @@ except Exception as e:
                     vp_types.append('价涨量缩')
                 else:
                     vp_types.append('量价中性')
-            
+
             vp_count = Counter(vp_types)
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
@@ -142,42 +144,35 @@ except Exception as e:
             final_score = min(10, max(1, round(score, 1)))
 
             # ==================== 图表 ====================
-            fig = make_subplots(rows=5, cols=1, 
+            fig = make_subplots(rows=5, cols=1,
                               subplot_titles=(f"价格 + 布林带（近{days}日）", "MACD", "KDJ", "RSI", "成交量"),
                               row_heights=[0.30, 0.18, 0.17, 0.15, 0.20], vertical_spacing=0.05)
-
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='收盘价', line=dict(width=2.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='布林上轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='布林中轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='布林下轨', line=dict(dash='dot')), row=1, col=1)
-
             fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='DIF'), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='DEA'), row=2, col=1)
             colors = ['red' if h > 0 else 'green' for h in df['Hist']]
             fig.add_trace(go.Bar(x=df.index, y=df['Hist'], name='MACD柱', marker_color=colors), row=2, col=1)
-
             fig.add_trace(go.Scatter(x=df.index, y=df['K'], name='K'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['D'], name='D'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['J'], name='J'), row=3, col=1)
             fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
-
             fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI(14)', line=dict(color='purple', width=2)), row=4, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=4, col=1)
-
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], name='量MA5'), row=5, col=1)
-
             fig.update_layout(height=1250, title_text=f"{user_input} 近{days}日量价 + 技术指标分析")
             st.plotly_chart(fig, use_container_width=True)
 
             # ==================== 专业报告 ====================
             st.subheader("📋 专业分析报告")
-
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("最新价格", f"{latest['Close']:.2f}")
-            with col2: 
+            with col2:
                 change = ((latest['Close'] / df.iloc[0]['Close']) - 1) * 100
                 st.metric("区间涨跌幅", f"{change:.2f}%")
             with col3: st.metric("综合评分", f"{final_score}/10")
@@ -195,7 +190,7 @@ except Exception as e:
                 points.append("• RSI处于超卖区，注意反弹机会")
             elif latest['RSI'] > 70:
                 points.append("• RSI处于超买区，注意回调风险")
-            
+
             if points:
                 for p in points:
                     st.write(p)
@@ -225,49 +220,49 @@ if compare_mode and compare_button:
     with st.spinner("正在进行多只股票对比..."):
         try:
             stocks = [line.strip() for line in compare_input.split('\n') if line.strip()]
-            
+           
             if len(stocks) < 2:
                 st.warning("请至少输入2只股票进行对比")
             else:
                 compare_data = {}
                 metrics = {}
-                
+               
                 for stock in stocks:
                     sym = get_symbol(stock)
                     hist = yf.Ticker(sym).history(period="180d")
-                    
+                   
                     if len(hist) > 30:
                         close = hist['Close'].tail(90)
                         compare_data[stock] = (close / close.iloc[0] * 100).round(2)
-                        
+                       
                         ret = (close.iloc[-1] / close.iloc[0] - 1) * 100
                         vol = close.pct_change().std() * 100
                         mdd = ((close / close.cummax()) - 1).min() * 100
-                        
+                       
                         metrics[stock] = {
                             '区间收益率%': round(ret, 2),
                             '波动率%': round(vol, 2),
                             '最大回撤%': round(mdd, 2)
                         }
-                
+               
                 if compare_data:
                     compare_df = pd.DataFrame(compare_data)
-                    
+                   
                     st.subheader("归一化价格走势对比（起点=100）")
                     fig = go.Figure()
                     for col in compare_df.columns:
                         fig.add_trace(go.Scatter(x=compare_df.index, y=compare_df[col], name=col))
                     fig.update_layout(height=500, title="多只股票归一化价格对比")
                     st.plotly_chart(fig, use_container_width=True)
-                    
+                   
                     st.subheader("关键指标对比（近90日）")
                     metrics_df = pd.DataFrame(metrics).T
                     st.dataframe(metrics_df.style.highlight_max(axis=0), use_container_width=True)
-                    
+                   
                     st.success("多只股票对比完成！")
                 else:
                     st.error("未能获取有效数据进行对比")
-                    
+                   
         except Exception as e:
             st.error(f"对比失败: {str(e)[:80]}...")
 
