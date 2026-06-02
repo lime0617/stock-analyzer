@@ -11,6 +11,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 import warnings
+import time
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
@@ -54,7 +55,7 @@ def send_analysis_email(to_email, symbol, df, chart_path, days):
 {symbol} 近 {days} 日量价分析报告
 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}
 最新收盘：{df['Close'].iloc[-1]:.2f}
-期间涨跌幅：{((df['Close'] / df['Close'].iloc[0] - 1) * 100):+.2f}%
+期间涨跌幅：{((df['Close'].iloc[-1] / df['Close'].iloc[0] - 1) * 100):+.2f}%
     """
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
     
@@ -80,9 +81,19 @@ def send_analysis_email(to_email, symbol, df, chart_path, days):
 if analyze_button and symbol:
     with st.spinner(f"正在获取并分析 {symbol} 数据..."):
         try:
+            # === 数据获取（增强稳定版）===
             if any(x in symbol.upper() for x in ['.SZ','.SH','.BJ','000','600','300','688']):
-                df = ak.stock_zh_a_hist(symbol=symbol[:6], period="daily",
-                                      start_date=(datetime.now()-timedelta(days=days+60)).strftime('%Y%m%d'))
+                # A股 - 重试机制
+                for attempt in range(3):
+                    try:
+                        df = ak.stock_zh_a_hist(symbol=symbol[:6], period="daily",
+                                              start_date=(datetime.now()-timedelta(days=days+60)).strftime('%Y%m%d'))
+                        break
+                    except:
+                        if attempt == 2:
+                            raise
+                        time.sleep(2 + attempt)
+                
                 df = df.rename(columns={'日期':'Date', '收盘':'Close', '成交量':'Volume', '开盘':'Open', '最高':'High', '最低':'Low'})
                 df['Date'] = pd.to_datetime(df['Date'])
                 df = df.set_index('Date')
@@ -91,6 +102,7 @@ if analyze_button and symbol:
             
             df = df.tail(days).copy()
             
+            # 计算指标
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA10'] = df['Close'].rolling(10).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
@@ -102,6 +114,7 @@ if analyze_button and symbol:
             df.loc[df['Volume_Z'] > 2.0, 'Anomaly'] = '🔴 显著放量'
             df.loc[df['Volume_Z'] < -1.5, 'Anomaly'] = '🔵 显著缩量'
             
+            # 绘图
             fig_path = f"{symbol}_chart.png"
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
             
@@ -121,15 +134,20 @@ if analyze_button and symbol:
             plt.tight_layout()
             plt.savefig(fig_path, dpi=200, bbox_inches='tight')
             
+            # 显示结果
             col1, col2 = st.columns([3, 2])
             with col1:
                 st.pyplot(fig)
             with col2:
                 st.subheader("📊 关键指标")
                 latest = df.iloc[-1]
-                st.metric("最新价格", f"{latest['Close']:.2f}")
-                change = ((latest['Close']/df.iloc[0]['Close'] - 1) * 100)
-                st.metric("期间涨跌幅", f"{change:+.2f}%")
+                st.metric("最新价格", f"{float(latest['Close']):.2f}")
+                
+                try:
+                    change = ((float(latest['Close']) / float(df.iloc[0]['Close']) - 1) * 100)
+                    st.metric("期间涨跌幅", f"{change:+.2f}%")
+                except:
+                    st.metric("期间涨跌幅", "计算错误")
                 
                 anomalies = df[df['Anomaly'] != '正常']
                 if not anomalies.empty:
@@ -138,13 +156,15 @@ if analyze_button and symbol:
                 else:
                     st.success("✅ 近期成交量无显著异常")
             
+            # 发送邮件
             if enable_email:
                 send_analysis_email(to_email, symbol, df, fig_path, days)
             
+            # 清理
             if os.path.exists(fig_path):
                 os.remove(fig_path)
                 
         except Exception as e:
-            st.error(f"分析失败: {str(e)}")
+            st.error(f"分析失败: {str(e)[:150]}")
 
 st.caption("数据来源：akshare + yfinance | 由 Grok 构建")
