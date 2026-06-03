@@ -1,3 +1,14 @@
+import os
+import streamlit as st
+
+# === Railway / Server 环境优化 ===
+os.environ["STREAMLIT_SERVER_HEADLESS"] = "true"
+os.environ["STREAMLIT_SERVER_PORT"] = os.environ.get("PORT", "8080")
+os.environ["STREAMLIT_SERVER_ADDRESS"] = "0.0.0.0"
+os.environ["STREAMLIT_BROWSER_GATHERUSAGESTATS"] = "false"
+
+# 防止启动时报错
+st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
