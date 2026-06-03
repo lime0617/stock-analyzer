@@ -5,14 +5,15 @@ from plotly.subplots import make_subplots
 import yfinance as yf
 import akshare as ak
 import warnings
-from collections import Counter
 
 warnings.filterwarnings('ignore')
 
+# ====================== 页面配置 ======================
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
+
 st.title("🚀 股票量价智能分析器（短线专业版）")
 
-# ==================== 超强名称转代码 ====================
+# ====================== 名称转代码 ======================
 @st.cache_data(ttl=3600)
 def get_symbol(user_input):
     if not user_input:
@@ -59,29 +60,32 @@ def get_symbol(user_input):
         pass
     return user_input
 
-
-@st.cache_data(ttl=1800)
+# ====================== 获取股票数据（优化版） ======================
+@st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_data(symbol, days):
     code = symbol[:6] if len(symbol) >= 6 else symbol
+    
     try:
+        # 优先使用 akshare（A股数据更准确）
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-        if not df.empty:
+        if not df.empty and len(df) >= 20:
             df = df.set_index('日期')
             df = df.rename(columns={'开盘':'Open','收盘':'Close','最高':'High','最低':'Low','成交量':'Volume'})
-            df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-            return df.tail(days + 40).tail(days)
+            return df[['Open', 'High', 'Low', 'Close', 'Volume']].tail(days + 40).tail(days)
     except:
         pass
+
     try:
+        # 备用 yfinance
         df = yf.Ticker(symbol).history(period=f"{days + 60}d")
         if not df.empty:
-            return df.tail(days)
+            return df[['Open', 'High', 'Low', 'Close', 'Volume']].tail(days)
     except:
         pass
+    
     return None
 
-
-# ==================== 技术指标 ====================
+# ====================== 技术指标 ======================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -138,11 +142,11 @@ def calculate_wr(df, period=14):
     wr = -100 * (highest_high - df['Close']) / (highest_high - lowest_low)
     return wr
 
-# ==================== 侧边栏 ====================
+# ====================== 侧边栏 ======================
 with st.sidebar:
     st.header("分析设置")
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
-  
+ 
     if not compare_mode:
         user_input = st.text_input("股票名称或代码", value="600396", help="推荐直接输入6位代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
@@ -152,13 +156,13 @@ with st.sidebar:
         compare_input = st.text_area("请输入多只股票（每行一个）", value="600396\n300058\n600519", height=120)
         compare_button = st.button("🚀 开始多只股票对比", type="primary")
 
-# ==================== 单只股票分析 ====================
+# ====================== 单只股票分析 ======================
 if not compare_mode and analyze_button and user_input:
     with st.spinner(f"正在获取并分析 {user_input}..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
-            
+           
             if df is None or len(df) < 20:
                 st.error(f"无法获取 **{user_input}** 的数据\n\n**建议**：直接输入6位股票代码（如 600396）")
                 st.stop()
@@ -243,26 +247,22 @@ if not compare_mode and analyze_button and user_input:
                               subplot_titles=("价格 + 布林带", "MACD", "KDJ", "情绪指标(PSY+CCI)", "OBV+成交量", "WR威廉指标"),
                               row_heights=[0.22, 0.16, 0.16, 0.16, 0.15, 0.15], vertical_spacing=0.04)
 
-            # 1. 价格 + 布林带
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='收盘价', line=dict(width=2.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='布林上轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='布林中轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='布林下轨', line=dict(dash='dot')), row=1, col=1)
 
-            # 2. MACD
             fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='DIF'), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='DEA'), row=2, col=1)
             colors = ['red' if h > 0 else 'green' for h in df['Hist']]
             fig.add_trace(go.Bar(x=df.index, y=df['Hist'], name='MACD柱', marker_color=colors), row=2, col=1)
 
-            # 3. KDJ
             fig.add_trace(go.Scatter(x=df.index, y=df['K'], name='K'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['D'], name='D'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['J'], name='J'), row=3, col=1)
             fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
 
-            # 4. 情绪指标
             fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY(12)', line=dict(color='orange')), row=4, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI(14)', line=dict(color='purple')), row=4, col=1)
             fig.add_hline(y=75, line_dash="dash", line_color="red", row=4, col=1)
@@ -270,11 +270,9 @@ if not compare_mode and analyze_button and user_input:
             fig.add_hline(y=100, line_dash="dash", line_color="red", row=4, col=1)
             fig.add_hline(y=-100, line_dash="dash", line_color="green", row=4, col=1)
 
-            # 5. OBV + 成交量
             fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name='OBV', line=dict(color='purple')), row=5, col=1)
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
 
-            # 6. WR威廉指标
             fig.add_trace(go.Scatter(x=df.index, y=df['WR'], name='WR(14)', line=dict(color='brown')), row=6, col=1)
             fig.add_hline(y=-20, line_dash="dash", line_color="red", row=6, col=1)
             fig.add_hline(y=-80, line_dash="dash", line_color="green", row=6, col=1)
