@@ -17,69 +17,71 @@ st.title("🚀 股票量价智能分析器（短线专业版）")
 def get_symbol(user_input):
     if not user_input:
         return user_input
-    
     user_input = str(user_input).strip()
-    upper_input = user_input.upper()
-    
-    # 1. 直接输入6位数字代码（最可靠）
+    upper = user_input.upper()
+
     if user_input.isdigit() and len(user_input) == 6:
         if user_input.startswith(('6', '5', '9')):
             return f"{user_input}.SH"
         else:
             return f"{user_input}.SZ"
-    
-    # 2. 已带后缀
-    if any(x in upper_input for x in ['.SH', '.SZ', '.SS', '.HK']):
-        return upper_input.replace('.SS', '.SH')
-    
-    # 3. 常见股票名称映射表（可自行扩展）
+
+    if any(x in upper for x in ['.SH', '.SZ', '.SS', '.HK']):
+        return upper.replace('.SS', '.SH')
+
     name_map = {
-        "华电辽能": "600396.SH",
-        "辽能": "600396.SH",
-        "华电": "600396.SH",
-        "贵州茅台": "600519.SH",
-        "茅台": "600519.SH",
-        "宁德时代": "300750.SZ",
-        "比亚迪": "002594.SZ",
-        "中国平安": "601318.SH",
-        "平安": "601318.SH",
-        "招商银行": "600036.SH",
-        "招行": "600036.SH",
-        "五粮液": "000858.SZ",
-        "隆基绿能": "601012.SH",
-        "蓝色光标": "300058.SZ",
-        "光标": "300058.SZ",
+        "华电辽能": "600396", "辽能": "600396", "华电": "600396",
+        "贵州茅台": "600519", "茅台": "600519",
+        "宁德时代": "300750", "比亚迪": "002594",
+        "中国平安": "601318", "平安": "601318",
+        "招商银行": "600036", "招行": "600036",
+        "五粮液": "000858", "隆基绿能": "601012",
+        "蓝色光标": "300058", "光标": "300058",
     }
-    
     for key in name_map:
-        if key in user_input or key in upper_input:
-            return name_map[key]
-    
-    # 4. akshare 模糊匹配
+        if key in user_input:
+            code = name_map[key]
+            return f"{code}.SH" if code.startswith('6') else f"{code}.SZ"
+
     try:
-        code_df = ak.stock_info_a_code_name()
-        match = code_df[code_df['name'].str.contains(user_input, na=False, regex=False)]
+        df = ak.stock_info_a_code_name()
+        match = df[df['name'].str.contains(user_input, na=False)]
         if not match.empty:
             code = str(match.iloc[0]['code'])
-            suffix = ".SZ" if code.startswith(('0', '3', '8')) else ".SH"
-            return f"{code}{suffix}"
+            return f"{code}.SH" if code.startswith('6') else f"{code}.SZ"
     except:
         pass
-    
-    # 5. 兜底返回原输入
     return user_input
 
 
 @st.cache_data(ttl=1800)
 def get_stock_data(symbol, days):
+    """优先 akshare，失败再用 yfinance"""
+    code = symbol[:6] if len(symbol) >= 6 else symbol
+    
+    # akshare 主力
+    try:
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
+        if not df.empty:
+            df = df.set_index('日期')
+            df = df.rename(columns={'开盘':'Open','收盘':'Close','最高':'High','最低':'Low','成交量':'Volume'})
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+            return df.tail(days + 30).tail(days)
+    except:
+        pass
+
+    # yfinance 备用
     try:
         df = yf.Ticker(symbol).history(period=f"{days + 60}d")
-        return df.tail(days).copy() if not df.empty else None
+        if not df.empty:
+            return df.tail(days)
     except:
-        return None
+        pass
+    
+    return None
 
 
-# ==================== 技术指标函数 ====================
+# ==================== 技术指标 ====================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -107,20 +109,17 @@ def calculate_bbands(df, window=20):
 def calculate_psy(df, period=12):
     diff = df['Close'].diff()
     up = (diff > 0).rolling(window=period).sum()
-    psy = up / period * 100
-    return psy
+    return up / period * 100
 
 def calculate_bias(df, period=6):
     ma = df['Close'].rolling(window=period).mean()
-    bias = (df['Close'] - ma) / ma * 100
-    return bias
+    return (df['Close'] - ma) / ma * 100
 
 def calculate_cci(df, period=14):
     tp = (df['High'] + df['Low'] + df['Close']) / 3
     ma_tp = tp.rolling(window=period).mean()
     md = tp.rolling(window=period).apply(lambda x: abs(x - x.mean()).mean())
-    cci = (tp - ma_tp) / (0.015 * md)
-    return cci
+    return (tp - ma_tp) / (0.015 * md)
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -128,23 +127,23 @@ with st.sidebar:
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
   
     if not compare_mode:
-        user_input = st.text_input("股票名称或代码", value="华电辽能", help="支持名称或代码")
+        user_input = st.text_input("股票名称或代码", value="600396", help="支持名称或6位代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
         st.info("当前为多只股票对比模式")
-        compare_input = st.text_area("请输入多只股票（每行一个）", value="000768\n300058\n600396", height=120)
+        compare_input = st.text_area("请输入多只股票（每行一个）", value="600396\n300058\n600519", height=120)
         compare_button = st.button("🚀 开始多只股票对比", type="primary")
 
 # ==================== 单只股票分析 ====================
 if not compare_mode and analyze_button and user_input:
-    with st.spinner(f"正在分析 {user_input}（近{days}日）..."):
+    with st.spinner(f"正在获取并分析 {user_input}..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
             
             if df is None or len(df) < 15:
-                st.error(f"无法获取 **{user_input}** 的数据，请尝试输入6位代码（如600396）或换只股票")
+                st.error(f"无法获取 **{user_input}** 的数据，建议直接输入6位代码（如 600396）")
                 st.stop()
 
             df = df.ffill()
@@ -166,7 +165,7 @@ if not compare_mode and analyze_button and user_input:
             rs = gain / loss
             df['RSI'] = 100 - (100 / (1 + rs.fillna(0)))
 
-            # 量价分析
+            # 量价
             vol_mean = df['Volume'].mean()
             vol_std = df['Volume'].std()
             df['Volume_Ratio'] = df['Volume'] / vol_mean
@@ -191,10 +190,9 @@ if not compare_mode and analyze_button and user_input:
                     vp_types.append('价涨量缩')
                 else:
                     vp_types.append('量价中性')
-            
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # 100分制评分
+            # 100分评分
             score = 50.0
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
@@ -307,6 +305,6 @@ if not compare_mode and analyze_button and user_input:
                 st.error("❌ **短期风险较高，建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:150]}")
+            st.error(f"分析失败: {str(e)[:120]}")
 
-st.caption("短线专业版 | 增强版名称识别 | PSY+BIAS+CCI情绪系统 | 仅供参考")
+st.caption("短线专业版 | akshare 主力数据源 | 名称智能识别 | 仅供参考")
