@@ -12,16 +12,15 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 st.title("🚀 股票量价智能分析器（短线专业版）")
 
-# ==================== 超强版 get_symbol ====================
+# ==================== 超强名称转代码 ====================
 @st.cache_data(ttl=3600)
 def get_symbol(user_input):
     if not user_input:
         return user_input
-    
     user_input = str(user_input).strip()
     upper = user_input.upper()
 
-    # 1. 直接输入6位代码（最推荐）
+    # 1. 直接输入6位代码
     if user_input.isdigit() and len(user_input) == 6:
         if user_input.startswith(('6', '5', '9')):
             return f"{user_input}.SH"
@@ -32,7 +31,7 @@ def get_symbol(user_input):
     if any(x in upper for x in ['.SH', '.SZ', '.SS', '.HK']):
         return upper.replace('.SS', '.SH')
 
-    # 3. 扩展名称映射表（可继续添加）
+    # 3. 名称映射表
     name_map = {
         "华电辽能": "600396", "辽能": "600396", "华电": "600396",
         "贵州茅台": "600519", "茅台": "600519",
@@ -48,43 +47,37 @@ def get_symbol(user_input):
         "中国神华": "601088",
         "万科": "000002", "万科A": "000002",
     }
-    
     for key in name_map:
         if key in user_input or key in upper:
             code = name_map[key]
             return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
 
-    # 4. akshare 模糊搜索（增强版）
+    # 4. akshare 在线查询
     try:
         df = ak.stock_info_a_code_name()
-        # 更宽松匹配
         match = df[df['name'].str.contains(user_input, case=False, na=False)]
         if not match.empty:
             code = str(match.iloc[0]['code'])
-            suffix = ".SH" if code.startswith(('6','9')) else ".SZ"
-            return f"{code}{suffix}"
+            return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
     except:
         pass
 
-    # 5. 兜底
     return user_input
 
 
 @st.cache_data(ttl=1800)
 def get_stock_data(symbol, days):
     code = symbol[:6] if len(symbol) >= 6 else symbol
-    
-    # 优先使用 akshare（A股最稳定）
+    # 优先 akshare
     try:
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
         if not df.empty:
             df = df.set_index('日期')
-            df = df.rename(columns={'开盘':'Open', '收盘':'Close', '最高':'High', '最低':'Low', '成交量':'Volume'})
+            df = df.rename(columns={'开盘':'Open','收盘':'Close','最高':'High','最低':'Low','成交量':'Volume'})
             df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
             return df.tail(days + 40).tail(days)
     except:
         pass
-
     # yfinance 备用
     try:
         df = yf.Ticker(symbol).history(period=f"{days + 60}d")
@@ -92,11 +85,10 @@ def get_stock_data(symbol, days):
             return df.tail(days)
     except:
         pass
-    
     return None
 
 
-# ==================== 技术指标（保持不变）===================
+# ==================== 技术指标 ====================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -142,7 +134,7 @@ with st.sidebar:
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
   
     if not compare_mode:
-        user_input = st.text_input("股票名称或代码", value="600396", help="推荐输入6位代码（如600396）")
+        user_input = st.text_input("股票名称或代码", value="600396", help="推荐输入6位代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
@@ -152,7 +144,7 @@ with st.sidebar:
 
 # ==================== 单只股票分析 ====================
 if not compare_mode and analyze_button and user_input:
-    with st.spinner(f"正在获取 {user_input} 数据..."):
+    with st.spinner(f"正在获取并分析 {user_input}..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
@@ -190,7 +182,7 @@ if not compare_mode and analyze_button and user_input:
 
             latest = df.iloc[-1]
 
-            # 量价形态
+            # 量价形态统计
             vp_types = []
             for i in range(1, len(df)):
                 p_close = df['Close'].iloc[i-1]
@@ -207,7 +199,7 @@ if not compare_mode and analyze_button and user_input:
                     vp_types.append('量价中性')
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # 评分
+            # 100分制评分
             score = 50.0
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
@@ -267,7 +259,7 @@ if not compare_mode and analyze_button and user_input:
             fig.update_layout(height=1350, title_text=f"{user_input}（{symbol}） 短线综合分析")
             st.plotly_chart(fig, use_container_width=True)
 
-            # ==================== 报告区域 ====================
+            # ==================== 报告 ====================
             st.subheader("📋 短线分析报告")
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("最新价格", f"{latest['Close']:.2f}")
@@ -320,6 +312,6 @@ if not compare_mode and analyze_button and user_input:
                 st.error("❌ **短期风险较高，建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:100]}")
+            st.error(f"分析失败: {str(e)[:150]}")
 
-st.caption("短线专业版 | 超强名称识别 | akshare主力数据源 | 仅供参考")
+st.caption("短线专业版 | 超强名称识别 + akshare在线数据 | 推荐输入6位代码 | 仅供参考")
