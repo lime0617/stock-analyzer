@@ -43,6 +43,7 @@ def get_symbol(user_input):
         "长江电力": "600900",
         "中国神华": "601088",
         "万科": "000002", "万科A": "000002",
+        "华安证券": "600909",
     }
     for key in name_map:
         if key in user_input or key in upper:
