@@ -1,15 +1,16 @@
-import streamlit as st
 import os
+import streamlit as st
 
-# Railway 环境适配
+# Railway 环境强制适配
 os.environ["STREAMLIT_SERVER_HEADLESS"] = "true"
 os.environ["STREAMLIT_SERVER_PORT"] = os.environ.get("PORT", "8080")
 os.environ["STREAMLIT_SERVER_ADDRESS"] = "0.0.0.0"
 os.environ["STREAMLIT_BROWSER_GATHERUSAGESTATS"] = "false"
 
-st.set_page_config(page_title="股票分析器", layout="wide")
+st.set_page_config(page_title="测试页面", layout="wide")
 
-st.title("🚀 测试页面 - 如果看到这个就成功了")
-st.success("✅ 服务已正常运行！")
+st.title("🚀 Streamlit 测试页面")
+st.success("✅ 如果你看到这个页面，说明环境已经正常！")
+st.info("现在可以逐步把你的原代码加回来测试。")
 
-st.info("现在你可以把完整代码逐步加回来测试。")
+st.caption("Railway 部署测试 - 2026.06")
