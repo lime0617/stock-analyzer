@@ -12,27 +12,23 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 st.title("🚀 股票量价智能分析器（短线专业版）")
 
-# ==================== 超强名称转代码（已优化）===================
+# ==================== 超强名称转代码 ====================
 @st.cache_data(ttl=3600)
 def get_symbol(user_input):
     if not user_input:
         return user_input
-    
     user_input = str(user_input).strip()
     upper = user_input.upper()
 
-    # 1. 6位纯数字代码（最推荐，最稳定）
     if user_input.isdigit() and len(user_input) == 6:
         if user_input.startswith(('6', '5', '9')):
             return f"{user_input}.SH"
         else:
             return f"{user_input}.SZ"
 
-    # 2. 已带后缀
     if any(x in upper for x in ['.SH', '.SZ', '.SS', '.HK']):
         return upper.replace('.SS', '.SH')
 
-    # 3. 名称映射表（可继续扩展）
     name_map = {
         "华电辽能": "600396", "辽能": "600396", "华电": "600396",
         "贵州茅台": "600519", "茅台": "600519",
@@ -53,25 +49,14 @@ def get_symbol(user_input):
             code = name_map[key]
             return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
 
-    # 4. akshare 分市场查询（更稳定）
     try:
-        # 上海
-        sh_df = ak.stock_info_sh_name_code()
-        match_sh = sh_df[sh_df['name'].str.contains(user_input, case=False, na=False)]
-        if not match_sh.empty:
-            code = str(match_sh.iloc[0]['symbol'])
-            return f"{code}.SH"
-        
-        # 深圳
-        sz_df = ak.stock_info_sz_name_code()
-        match_sz = sz_df[sz_df['name'].str.contains(user_input, case=False, na=False)]
-        if not match_sz.empty:
-            code = str(match_sz.iloc[0]['symbol'])
-            return f"{code}.SZ"
+        df = ak.stock_info_a_code_name()
+        match = df[df['name'].str.contains(user_input, case=False, na=False)]
+        if not match.empty:
+            code = str(match.iloc[0]['code'])
+            return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
     except:
         pass
-
-    # 5. 兜底返回原输入
     return user_input
 
 
@@ -96,7 +81,7 @@ def get_stock_data(symbol, days):
     return None
 
 
-# ==================== 技术指标（保持完整）===================
+# ==================== 技术指标 ====================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -140,6 +125,13 @@ def calculate_obv(df):
     obv = (df['Volume'] * (df['Close'] > df['Close'].shift(1)).astype(int) * 2 - 1).cumsum()
     return obv
 
+def calculate_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = abs(df['High'] - df['Close'].shift())
+    low_close = abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(window=period).mean()
+
 def calculate_wr(df, period=14):
     highest_high = df['High'].rolling(window=period).max()
     lowest_low = df['Low'].rolling(window=period).min()
@@ -152,7 +144,7 @@ with st.sidebar:
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
   
     if not compare_mode:
-        user_input = st.text_input("股票名称或代码", value="600396", help="最稳妥：输入6位代码")
+        user_input = st.text_input("股票名称或代码", value="600396", help="推荐直接输入6位代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
@@ -162,18 +154,18 @@ with st.sidebar:
 
 # ==================== 单只股票分析 ====================
 if not compare_mode and analyze_button and user_input:
-    with st.spinner(f"正在分析 {user_input}..."):
+    with st.spinner(f"正在获取并分析 {user_input}..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
             
             if df is None or len(df) < 20:
-                st.error(f"无法获取 **{user_input}** 的数据\n\n**强烈建议**：直接输入6位股票代码")
+                st.error(f"无法获取 **{user_input}** 的数据\n\n**建议**：直接输入6位股票代码（如 600396）")
                 st.stop()
 
             df = df.ffill()
 
-            # 计算指标
+            # 计算所有指标
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA10'] = df['Close'].rolling(10).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
@@ -184,6 +176,7 @@ if not compare_mode and analyze_button and user_input:
             df['BIAS'] = calculate_bias(df)
             df['CCI'] = calculate_cci(df)
             df['OBV'] = calculate_obv(df)
+            df['ATR'] = calculate_atr(df)
             df['WR'] = calculate_wr(df)
 
             delta = df['Close'].diff()
@@ -192,7 +185,7 @@ if not compare_mode and analyze_button and user_input:
             rs = gain / loss
             df['RSI'] = 100 - (100 / (1 + rs.fillna(0)))
 
-            # 量价
+            # 量价分析
             vol_mean = df['Volume'].mean()
             vol_std = df['Volume'].std()
             df['Volume_Ratio'] = df['Volume'] / vol_mean
@@ -219,54 +212,74 @@ if not compare_mode and analyze_button and user_input:
                     vp_types.append('量价中性')
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # 评分
+            # 100分制评分
             score = 50.0
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
             if latest['Close'] > latest['BB_Middle']: score += 10
             if latest['MACD'] > latest['Signal']: score += 12
+            if latest['MACD'] > 0: score += 8
             if latest['J'] < 35: score += 10
             elif latest['J'] > 75: score -= 10
+            if latest['K'] > latest['D']: score += 5
             if 25 < latest['PSY'] < 75: score += 8
             elif latest['PSY'] > 75: score -= 10
+            elif latest['PSY'] < 25: score += 12
+            if abs(latest['BIAS']) < 5: score += 7
+            elif latest['BIAS'] < -8: score += 10
+            elif latest['BIAS'] > 8: score -= 10
+            if -100 < latest['CCI'] < 100: score += 5
+            elif latest['CCI'] < -100: score += 8
+            elif latest['CCI'] > 100: score -= 8
             if latest['WR'] < -80: score += 10
             elif latest['WR'] > -20: score -= 8
             if latest_vp == '价涨量增': score += 12
+            elif latest_vp == '价涨量缩': score -= 8
 
             final_score = max(10, min(100, round(score)))
 
             # ==================== 图表 ====================
             fig = make_subplots(rows=6, cols=1,
-                              subplot_titles=("价格 + 布林带", "MACD", "KDJ", "情绪指标", "OBV+成交量", "WR威廉指标"),
+                              subplot_titles=("价格 + 布林带", "MACD", "KDJ", "情绪指标(PSY+CCI)", "OBV+成交量", "WR威廉指标"),
                               row_heights=[0.22, 0.16, 0.16, 0.16, 0.15, 0.15], vertical_spacing=0.04)
 
+            # 1. 价格 + 布林带
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='收盘价', line=dict(width=2.5)), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='上轨', line=dict(dash='dot')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='中轨', line=dict(dash='dot')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='下轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='布林上轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='布林中轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='布林下轨', line=dict(dash='dot')), row=1, col=1)
 
+            # 2. MACD
             fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='DIF'), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='DEA'), row=2, col=1)
             colors = ['red' if h > 0 else 'green' for h in df['Hist']]
             fig.add_trace(go.Bar(x=df.index, y=df['Hist'], name='MACD柱', marker_color=colors), row=2, col=1)
 
+            # 3. KDJ
             fig.add_trace(go.Scatter(x=df.index, y=df['K'], name='K'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['D'], name='D'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['J'], name='J'), row=3, col=1)
             fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
 
-            fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY', line=dict(color='orange')), row=4, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI', line=dict(color='purple')), row=4, col=1)
+            # 4. 情绪指标
+            fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY(12)', line=dict(color='orange')), row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI(14)', line=dict(color='purple')), row=4, col=1)
+            fig.add_hline(y=75, line_dash="dash", line_color="red", row=4, col=1)
+            fig.add_hline(y=25, line_dash="dash", line_color="green", row=4, col=1)
+            fig.add_hline(y=100, line_dash="dash", line_color="red", row=4, col=1)
+            fig.add_hline(y=-100, line_dash="dash", line_color="green", row=4, col=1)
 
+            # 5. OBV + 成交量
             fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name='OBV', line=dict(color='purple')), row=5, col=1)
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
 
-            fig.add_trace(go.Scatter(x=df.index, y=df['WR'], name='WR', line=dict(color='brown')), row=6, col=1)
+            # 6. WR威廉指标
+            fig.add_trace(go.Scatter(x=df.index, y=df['WR'], name='WR(14)', line=dict(color='brown')), row=6, col=1)
             fig.add_hline(y=-20, line_dash="dash", line_color="red", row=6, col=1)
             fig.add_hline(y=-80, line_dash="dash", line_color="green", row=6, col=1)
 
-            fig.update_layout(height=1550, title_text=f"{user_input}（{symbol}） 短线分析")
+            fig.update_layout(height=1550, title_text=f"{user_input}（{symbol}） 短线多指标分析")
             st.plotly_chart(fig, use_container_width=True)
 
             # ==================== 报告 ====================
@@ -290,19 +303,38 @@ if not compare_mode and analyze_button and user_input:
                 else: st.info("➡️ KDJ：中性")
             with sig4:
                 if latest_vp == '价涨量增': st.success("📈 量价：强势")
+                elif latest_vp == '价涨量缩': st.warning("⚠️ 量价：乏力")
                 else: st.info("➡️ 量价：正常")
+
+            st.subheader("🌡️ 市场情绪指标")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                psy_val = latest['PSY']
+                if psy_val > 75: st.error(f"PSY: {psy_val:.1f}（过热）")
+                elif psy_val < 25: st.success(f"PSY: {psy_val:.1f}（恐慌）")
+                else: st.info(f"PSY: {psy_val:.1f}")
+            with col_b:
+                bias_val = latest['BIAS']
+                if bias_val > 8: st.error(f"BIAS: {bias_val:.1f}（高估）")
+                elif bias_val < -8: st.success(f"BIAS: {bias_val:.1f}（低估）")
+                else: st.info(f"BIAS: {bias_val:.1f}")
+            with col_c:
+                cci_val = latest['CCI']
+                if cci_val > 100: st.error(f"CCI: {cci_val:.1f}（超买）")
+                elif cci_val < -100: st.success(f"CCI: {cci_val:.1f}（超卖）")
+                else: st.info(f"CCI: {cci_val:.1f}")
 
             st.subheader("💡 短线操作建议")
             if final_score >= 78:
-                st.success("🔥 **强烈短线买入**")
+                st.success("🔥 **强烈短线买入** - 多指标共振")
             elif final_score >= 65:
                 st.success("✅ **可短线参与**")
             elif final_score >= 50:
-                st.info("🟡 **观望**")
+                st.info("🟡 **观望等待更好时机**")
             else:
-                st.error("❌ **建议暂不操作**")
+                st.error("❌ **短期风险较高，建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:120]}")
+            st.error(f"分析失败: {str(e)[:150]}")
 
-st.caption("短线专业版 | 强化名称检索 | 推荐输入6位代码 | 仅供参考")
+st.caption("短线专业版 | OBV+WR+ATR+PSY+CCI | 推荐输入6位代码 | 仅供参考")
