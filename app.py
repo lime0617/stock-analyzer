@@ -10,7 +10,7 @@ from collections import Counter
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
-st.title("🚀 股票量价智能分析器（专业版）")
+st.title("🚀 股票量价智能分析器（短线专业版）")
 
 # ==================== 缓存函数 ====================
 @st.cache_data(ttl=3600)
@@ -64,6 +64,23 @@ def calculate_bbands(df, window=20):
     lower = sma - (std * 2)
     return sma, upper, lower
 
+def calculate_psy(df, period=12):
+    diff = df['Close'].diff()
+    up = (diff > 0).rolling(window=period).sum()
+    psy = up / period * 100
+    return psy
+
+def calculate_bias(df, period=6):
+    ma = df['Close'].rolling(window=period).mean()
+    bias = (df['Close'] - ma) / ma * 100
+    return bias
+
+def calculate_cci(df, period=14):
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    ma_tp = tp.rolling(window=period).mean()
+    md = tp.rolling(window=period).apply(lambda x: abs(x - x.mean()).mean())
+    cci = (tp - ma_tp) / (0.015 * md)
+    return cci
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
@@ -73,7 +90,7 @@ with st.sidebar:
     if not compare_mode:
         user_input = st.text_input("股票名称或代码", value="300058", help="支持中文名称搜索")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
-        analyze_button = st.button("🚀 开始专业分析", type="primary")
+        analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
         st.info("当前为多只股票对比模式")
         compare_input = st.text_area("请输入多只股票（每行一个）", value="000768\n300058\n蓝色光标", height=120)
@@ -81,25 +98,29 @@ with st.sidebar:
 
 # ==================== 单只股票分析 ====================
 if not compare_mode and analyze_button and user_input:
-    with st.spinner(f"正在分析 {user_input}（近{days}日）..."):
+    with st.spinner(f"正在进行短线情绪分析 {user_input}（近{days}日）..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
             
-            if df is None or len(df) < 10:
+            if df is None or len(df) < 15:
                 st.error(f"无法获取 {user_input} 的数据，请尝试其他股票")
                 st.stop()
 
             df = df.ffill()
 
-            # 计算指标
+            # 计算所有指标
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA10'] = df['Close'].rolling(10).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
             df['MACD'], df['Signal'], df['Hist'] = calculate_macd(df)
             df['K'], df['D'], df['J'] = calculate_kdj(df)
             df['BB_Middle'], df['BB_Upper'], df['BB_Lower'] = calculate_bbands(df)
+            df['PSY'] = calculate_psy(df)
+            df['BIAS'] = calculate_bias(df)
+            df['CCI'] = calculate_cci(df)
 
+            # RSI
             delta = df['Close'].diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
             loss = -delta.where(delta < 0, 0).rolling(14).mean()
@@ -116,7 +137,7 @@ if not compare_mode and analyze_button and user_input:
 
             latest = df.iloc[-1]
 
-            # 量价形态
+            # ==================== 量价形态统计 ====================
             vp_types = []
             for i in range(1, len(df)):
                 p_close = df['Close'].iloc[i-1]
@@ -134,73 +155,78 @@ if not compare_mode and analyze_button and user_input:
             
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # ==================== 100分制综合评分 ====================
+            # ==================== 100分制短线评分 ====================
             score = 50.0
+            # 趋势均线
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
             if latest['Close'] > latest['BB_Middle']: score += 10
-            if latest['Close'] > latest['BB_Lower']: score += 5
+            # MACD + KDJ
             if latest['MACD'] > latest['Signal']: score += 12
             if latest['MACD'] > 0: score += 8
-            if latest['J'] < 30: score += 10
-            elif latest['J'] > 80: score -= 12
-            if latest['K'] > latest['D']: score += 8
-            if latest['RSI'] < 35: score += 10
+            if latest['J'] < 35: score += 10
+            elif latest['J'] > 75: score -= 10
+            if latest['K'] > latest['D']: score += 5
+            # 情绪指标（重点）
+            if 25 < latest['PSY'] < 75: score += 8
+            elif latest['PSY'] > 75: score -= 10
+            elif latest['PSY'] < 25: score += 12
+            if abs(latest['BIAS']) < 5: score += 7
+            elif latest['BIAS'] < -8: score += 10
+            elif latest['BIAS'] > 8: score -= 10
+            if -100 < latest['CCI'] < 100: score += 5
+            elif latest['CCI'] < -100: score += 8
+            elif latest['CCI'] > 100: score -= 8
+            # RSI + 量价
+            if latest['RSI'] < 40: score += 8
             elif latest['RSI'] > 70: score -= 10
-            elif 45 < latest['RSI'] < 55: score += 5
             if latest_vp == '价涨量增': score += 12
-            elif latest_vp == '价跌量缩': score += 6
             elif latest_vp == '价涨量缩': score -= 8
 
             final_score = max(10, min(100, round(score)))
 
             # ==================== 图表 ====================
             fig = make_subplots(rows=5, cols=1,
-                              subplot_titles=(f"价格 + 布林带（近{days}日）", "MACD", "KDJ", "RSI", "成交量"),
-                              row_heights=[0.30, 0.18, 0.17, 0.15, 0.20], vertical_spacing=0.05)
+                              subplot_titles=("价格 + 布林带", "MACD", "KDJ", "情绪指标 (PSY + CCI)", "成交量"),
+                              row_heights=[0.28, 0.18, 0.17, 0.17, 0.20], vertical_spacing=0.05)
 
-            # 价格 + 布林带
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='收盘价', line=dict(width=2.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='布林上轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='布林中轨', line=dict(dash='dot')), row=1, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='布林下轨', line=dict(dash='dot')), row=1, col=1)
 
-            # MACD
             fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='DIF'), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='DEA'), row=2, col=1)
             colors = ['red' if h > 0 else 'green' for h in df['Hist']]
             fig.add_trace(go.Bar(x=df.index, y=df['Hist'], name='MACD柱', marker_color=colors), row=2, col=1)
 
-            # KDJ
             fig.add_trace(go.Scatter(x=df.index, y=df['K'], name='K'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['D'], name='D'), row=3, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['J'], name='J'), row=3, col=1)
             fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
 
-            # RSI
-            fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI(14)', line=dict(color='purple', width=2)), row=4, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red", row=4, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY(12)', line=dict(color='orange')), row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI(14)', line=dict(color='purple')), row=4, col=1)
+            fig.add_hline(y=75, line_dash="dash", line_color="red", row=4, col=1)
+            fig.add_hline(y=25, line_dash="dash", line_color="green", row=4, col=1)
+            fig.add_hline(y=100, line_dash="dash", line_color="red", row=4, col=1)
+            fig.add_hline(y=-100, line_dash="dash", line_color="green", row=4, col=1)
 
-            # 成交量 + MA5
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], name='量MA5', line=dict(color='red')), row=5, col=1)
 
-            fig.update_layout(height=1250, title_text=f"{user_input}（{symbol}） 近{days}日量价分析")
+            fig.update_layout(height=1350, title_text=f"{user_input}（{symbol}） 短线情绪综合分析")
             st.plotly_chart(fig, use_container_width=True)
 
             # ==================== 报告 ====================
-            st.subheader("📋 专业分析报告")
+            st.subheader("📋 短线分析报告")
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("最新价格", f"{latest['Close']:.2f}")
-            with col2: 
-                change = ((latest['Close'] / df.iloc[0]['Close']) - 1) * 100
-                st.metric("区间涨跌幅", f"{change:.2f}%")
-            with col3: 
-                st.metric("综合强度", f"{final_score} 分")
+            with col2: st.metric("区间涨跌幅", f"{((latest['Close'] / df.iloc[0]['Close']) - 1) * 100:.2f}%")
+            with col3: st.metric("短线综合得分", f"{final_score} 分")
 
-            # ==================== 技术信号灯 ====================
+            # 技术信号灯
             st.subheader("🚦 技术信号灯")
             sig1, sig2, sig3, sig4 = st.columns(4)
             with sig1:
@@ -214,9 +240,9 @@ if not compare_mode and analyze_button and user_input:
                 else:
                     st.error("📉 MACD：死叉")
             with sig3:
-                if latest['J'] < 30:
+                if latest['J'] < 35:
                     st.success("📈 KDJ：超卖")
-                elif latest['J'] > 80:
+                elif latest['J'] > 75:
                     st.error("📉 KDJ：超买")
                 else:
                     st.info("➡️ KDJ：中性")
@@ -228,20 +254,37 @@ if not compare_mode and analyze_button and user_input:
                 else:
                     st.info("➡️ 量价：正常")
 
-            # ==================== 买卖建议 ====================
-            st.subheader("💡 综合买卖建议")
-            if final_score >= 80:
-                st.success("🔥 **强烈买入信号** - 多指标共振")
-            elif final_score >= 70:
-                st.success("✅ **可考虑分批买入**")
-            elif final_score >= 55:
-                st.info("🟡 **观望为主**，等待更好时机")
-            elif final_score >= 40:
-                st.warning("⚠️ **谨慎操作**，风险较高")
+            # 情绪指标
+            st.subheader("🌡️ 市场情绪指标")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                psy_val = latest['PSY']
+                if psy_val > 75: st.error(f"PSY: {psy_val:.1f}（过热）")
+                elif psy_val < 25: st.success(f"PSY: {psy_val:.1f}（恐慌）")
+                else: st.info(f"PSY: {psy_val:.1f}")
+            with col_b:
+                bias_val = latest['BIAS']
+                if bias_val > 8: st.error(f"BIAS: {bias_val:.1f}（高估）")
+                elif bias_val < -8: st.success(f"BIAS: {bias_val:.1f}（低估）")
+                else: st.info(f"BIAS: {bias_val:.1f}")
+            with col_c:
+                cci_val = latest['CCI']
+                if cci_val > 100: st.error(f"CCI: {cci_val:.1f}（超买）")
+                elif cci_val < -100: st.success(f"CCI: {cci_val:.1f}（超卖）")
+                else: st.info(f"CCI: {cci_val:.1f}")
+
+            # 最终建议
+            st.subheader("💡 短线操作建议")
+            if final_score >= 78:
+                st.success("🔥 **强烈短线买入** - 多指标共振，情绪良好")
+            elif final_score >= 65:
+                st.success("✅ **可短线参与**")
+            elif final_score >= 50:
+                st.info("🟡 **观望等待更好时机**")
             else:
-                st.error("❌ **建议观望或减仓** - 空头信号较强")
+                st.error("❌ **短期风险较高，建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:100]}")
+            st.error(f"分析失败: {str(e)[:120]}")
 
-st.caption("由 Grok 优化构建 | 100分制评分 + 信号灯 | 仅供参考")
+st.caption("短线专业版 | 完整量价 + 情绪指标 | 由 Grok 优化 | 仅供参考")
