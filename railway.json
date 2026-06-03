@@ -4,6 +4,6 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "startCommand": "streamlit run app.py --server.port $PORT --server.address 0.0.0.0"
+    "startCommand": "streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.fileWatcherType none --browser.gatherUsageStats false --logger.level error"
   }
 }
