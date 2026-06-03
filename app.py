@@ -12,21 +12,61 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 st.title("🚀 股票量价智能分析器（短线专业版）")
 
-# ==================== 缓存函数 ====================
+# ==================== 增强版 get_symbol ====================
 @st.cache_data(ttl=3600)
 def get_symbol(user_input):
-    user_input = str(user_input).strip().upper()
-    if any(x in user_input for x in ['.SH', '.SZ', '.SS', '.HK']):
-        return user_input.replace('.SS', '.SH')
+    if not user_input:
+        return user_input
     
+    user_input = str(user_input).strip()
+    upper_input = user_input.upper()
+    
+    # 1. 直接输入6位数字代码（最可靠）
+    if user_input.isdigit() and len(user_input) == 6:
+        if user_input.startswith(('6', '5', '9')):
+            return f"{user_input}.SH"
+        else:
+            return f"{user_input}.SZ"
+    
+    # 2. 已带后缀
+    if any(x in upper_input for x in ['.SH', '.SZ', '.SS', '.HK']):
+        return upper_input.replace('.SS', '.SH')
+    
+    # 3. 常见股票名称映射表（可自行扩展）
+    name_map = {
+        "华电辽能": "600396.SH",
+        "辽能": "600396.SH",
+        "华电": "600396.SH",
+        "贵州茅台": "600519.SH",
+        "茅台": "600519.SH",
+        "宁德时代": "300750.SZ",
+        "比亚迪": "002594.SZ",
+        "中国平安": "601318.SH",
+        "平安": "601318.SH",
+        "招商银行": "600036.SH",
+        "招行": "600036.SH",
+        "五粮液": "000858.SZ",
+        "隆基绿能": "601012.SH",
+        "蓝色光标": "300058.SZ",
+        "光标": "300058.SZ",
+    }
+    
+    for key in name_map:
+        if key in user_input or key in upper_input:
+            return name_map[key]
+    
+    # 4. akshare 模糊匹配
     try:
         code_df = ak.stock_info_a_code_name()
-        match = code_df[code_df['name'].str.contains(user_input, na=False)]
+        match = code_df[code_df['name'].str.contains(user_input, na=False, regex=False)]
         if not match.empty:
             code = str(match.iloc[0]['code'])
-            return f"{code}.SZ" if code.startswith(('0', '3', '8')) else f"{code}.SH"
+            suffix = ".SZ" if code.startswith(('0', '3', '8')) else ".SH"
+            return f"{code}{suffix}"
     except:
         pass
+    
+    # 5. 兜底返回原输入
     return user_input
 
 
@@ -39,7 +79,7 @@ def get_stock_data(symbol, days):
         return None
 
 
-# ==================== 技术指标 ====================
+# ==================== 技术指标函数 ====================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -88,28 +128,28 @@ with st.sidebar:
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
   
     if not compare_mode:
-        user_input = st.text_input("股票名称或代码", value="300058", help="支持中文名称搜索")
+        user_input = st.text_input("股票名称或代码", value="华电辽能", help="支持名称或代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
         st.info("当前为多只股票对比模式")
-        compare_input = st.text_area("请输入多只股票（每行一个）", value="000768\n300058\n蓝色光标", height=120)
+        compare_input = st.text_area("请输入多只股票（每行一个）", value="000768\n300058\n600396", height=120)
         compare_button = st.button("🚀 开始多只股票对比", type="primary")
 
 # ==================== 单只股票分析 ====================
 if not compare_mode and analyze_button and user_input:
-    with st.spinner(f"正在进行短线情绪分析 {user_input}（近{days}日）..."):
+    with st.spinner(f"正在分析 {user_input}（近{days}日）..."):
         try:
             symbol = get_symbol(user_input)
             df = get_stock_data(symbol, days)
             
             if df is None or len(df) < 15:
-                st.error(f"无法获取 {user_input} 的数据，请尝试其他股票")
+                st.error(f"无法获取 **{user_input}** 的数据，请尝试输入6位代码（如600396）或换只股票")
                 st.stop()
 
             df = df.ffill()
 
-            # 计算所有指标
+            # 计算指标
             df['MA5'] = df['Close'].rolling(5).mean()
             df['MA10'] = df['Close'].rolling(10).mean()
             df['MA20'] = df['Close'].rolling(20).mean()
@@ -120,7 +160,6 @@ if not compare_mode and analyze_button and user_input:
             df['BIAS'] = calculate_bias(df)
             df['CCI'] = calculate_cci(df)
 
-            # RSI
             delta = df['Close'].diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
             loss = -delta.where(delta < 0, 0).rolling(14).mean()
@@ -137,7 +176,7 @@ if not compare_mode and analyze_button and user_input:
 
             latest = df.iloc[-1]
 
-            # ==================== 量价形态统计 ====================
+            # 量价形态
             vp_types = []
             for i in range(1, len(df)):
                 p_close = df['Close'].iloc[i-1]
@@ -155,19 +194,16 @@ if not compare_mode and analyze_button and user_input:
             
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # ==================== 100分制短线评分 ====================
+            # 100分制评分
             score = 50.0
-            # 趋势均线
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
             if latest['Close'] > latest['BB_Middle']: score += 10
-            # MACD + KDJ
             if latest['MACD'] > latest['Signal']: score += 12
             if latest['MACD'] > 0: score += 8
             if latest['J'] < 35: score += 10
             elif latest['J'] > 75: score -= 10
             if latest['K'] > latest['D']: score += 5
-            # 情绪指标（重点）
             if 25 < latest['PSY'] < 75: score += 8
             elif latest['PSY'] > 75: score -= 10
             elif latest['PSY'] < 25: score += 12
@@ -177,7 +213,6 @@ if not compare_mode and analyze_button and user_input:
             if -100 < latest['CCI'] < 100: score += 5
             elif latest['CCI'] < -100: score += 8
             elif latest['CCI'] > 100: score -= 8
-            # RSI + 量价
             if latest['RSI'] < 40: score += 8
             elif latest['RSI'] > 70: score -= 10
             if latest_vp == '价涨量增': score += 12
@@ -216,7 +251,7 @@ if not compare_mode and analyze_button and user_input:
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], name='量MA5', line=dict(color='red')), row=5, col=1)
 
-            fig.update_layout(height=1350, title_text=f"{user_input}（{symbol}） 短线情绪综合分析")
+            fig.update_layout(height=1350, title_text=f"{user_input}（{symbol}） 短线综合分析")
             st.plotly_chart(fig, use_container_width=True)
 
             # ==================== 报告 ====================
@@ -226,35 +261,23 @@ if not compare_mode and analyze_button and user_input:
             with col2: st.metric("区间涨跌幅", f"{((latest['Close'] / df.iloc[0]['Close']) - 1) * 100:.2f}%")
             with col3: st.metric("短线综合得分", f"{final_score} 分")
 
-            # 技术信号灯
             st.subheader("🚦 技术信号灯")
             sig1, sig2, sig3, sig4 = st.columns(4)
             with sig1:
-                if latest['Close'] > latest['BB_Middle']:
-                    st.success("📈 布林带：多头")
-                else:
-                    st.error("📉 布林带：空头")
+                if latest['Close'] > latest['BB_Middle']: st.success("📈 布林带：多头")
+                else: st.error("📉 布林带：空头")
             with sig2:
-                if latest['MACD'] > latest['Signal']:
-                    st.success("📈 MACD：金叉")
-                else:
-                    st.error("📉 MACD：死叉")
+                if latest['MACD'] > latest['Signal']: st.success("📈 MACD：金叉")
+                else: st.error("📉 MACD：死叉")
             with sig3:
-                if latest['J'] < 35:
-                    st.success("📈 KDJ：超卖")
-                elif latest['J'] > 75:
-                    st.error("📉 KDJ：超买")
-                else:
-                    st.info("➡️ KDJ：中性")
+                if latest['J'] < 35: st.success("📈 KDJ：超卖")
+                elif latest['J'] > 75: st.error("📉 KDJ：超买")
+                else: st.info("➡️ KDJ：中性")
             with sig4:
-                if latest_vp == '价涨量增':
-                    st.success("📈 量价：强势")
-                elif latest_vp == '价涨量缩':
-                    st.warning("⚠️ 量价：乏力")
-                else:
-                    st.info("➡️ 量价：正常")
+                if latest_vp == '价涨量增': st.success("📈 量价：强势")
+                elif latest_vp == '价涨量缩': st.warning("⚠️ 量价：乏力")
+                else: st.info("➡️ 量价：正常")
 
-            # 情绪指标
             st.subheader("🌡️ 市场情绪指标")
             col_a, col_b, col_c = st.columns(3)
             with col_a:
@@ -273,10 +296,9 @@ if not compare_mode and analyze_button and user_input:
                 elif cci_val < -100: st.success(f"CCI: {cci_val:.1f}（超卖）")
                 else: st.info(f"CCI: {cci_val:.1f}")
 
-            # 最终建议
             st.subheader("💡 短线操作建议")
             if final_score >= 78:
-                st.success("🔥 **强烈短线买入** - 多指标共振，情绪良好")
+                st.success("🔥 **强烈短线买入** - 多指标共振")
             elif final_score >= 65:
                 st.success("✅ **可短线参与**")
             elif final_score >= 50:
@@ -285,6 +307,6 @@ if not compare_mode and analyze_button and user_input:
                 st.error("❌ **短期风险较高，建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:120]}")
+            st.error(f"分析失败: {str(e)[:150]}")
 
-st.caption("短线专业版 | 完整量价 + 情绪指标 | 由 Grok 优化 | 仅供参考")
+st.caption("短线专业版 | 增强版名称识别 | PSY+BIAS+CCI情绪系统 | 仅供参考")
