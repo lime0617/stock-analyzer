@@ -5,7 +5,6 @@ from plotly.subplots import make_subplots
 import yfinance as yf
 import akshare as ak
 import warnings
-import requests
 from collections import Counter
 
 warnings.filterwarnings('ignore')
@@ -13,7 +12,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="股票量价分析器", layout="wide", page_icon="📈")
 st.title("🚀 股票量价智能分析器（短线专业版）")
 
-# ==================== 最强在线名称检索 ====================
+# ==================== 超强名称转代码（已优化）===================
 @st.cache_data(ttl=3600)
 def get_symbol(user_input):
     if not user_input:
@@ -22,7 +21,7 @@ def get_symbol(user_input):
     user_input = str(user_input).strip()
     upper = user_input.upper()
 
-    # 1. 直接输入6位代码（最推荐）
+    # 1. 6位纯数字代码（最推荐，最稳定）
     if user_input.isdigit() and len(user_input) == 6:
         if user_input.startswith(('6', '5', '9')):
             return f"{user_input}.SH"
@@ -33,7 +32,7 @@ def get_symbol(user_input):
     if any(x in upper for x in ['.SH', '.SZ', '.SS', '.HK']):
         return upper.replace('.SS', '.SH')
 
-    # 3. 本地映射表
+    # 3. 名称映射表（可继续扩展）
     name_map = {
         "华电辽能": "600396", "辽能": "600396", "华电": "600396",
         "贵州茅台": "600519", "茅台": "600519",
@@ -54,36 +53,25 @@ def get_symbol(user_input):
             code = name_map[key]
             return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
 
-    # 4. akshare 查询
+    # 4. akshare 分市场查询（更稳定）
     try:
-        for func in [ak.stock_info_sh_name_code, ak.stock_info_sz_name_code]:
-            df = func()
-            match = df[df['name'].str.contains(user_input, case=False, na=False)]
-            if not match.empty:
-                code = str(match.iloc[0]['symbol'])
-                return f"{code}.SH" if str(code).startswith('6') else f"{code}.SZ"
+        # 上海
+        sh_df = ak.stock_info_sh_name_code()
+        match_sh = sh_df[sh_df['name'].str.contains(user_input, case=False, na=False)]
+        if not match_sh.empty:
+            code = str(match_sh.iloc[0]['symbol'])
+            return f"{code}.SH"
+        
+        # 深圳
+        sz_df = ak.stock_info_sz_name_code()
+        match_sz = sz_df[sz_df['name'].str.contains(user_input, case=False, na=False)]
+        if not match_sz.empty:
+            code = str(match_sz.iloc[0]['symbol'])
+            return f"{code}.SZ"
     except:
         pass
 
-    # 5. 新浪财经在线检索（最强后备）
-    try:
-        url = f"https://suggest3.sinajs.cn/suggest/?name=suggest&text={user_input}"
-        headers = {"Referer": "https://finance.sina.com.cn"}
-        resp = requests.get(url, headers=headers, timeout=6)
-        if resp.status_code == 200:
-            text = resp.text
-            if '="' in text:
-                data_part = text.split('"')[1]
-                items = data_part.split(';')
-                for item in items:
-                    if item.strip():
-                        parts = item.strip().split()
-                        if parts and len(parts[0]) == 6 and parts[0].isdigit():
-                            code = parts[0]
-                            return f"{code}.SH" if code.startswith(('6','9')) else f"{code}.SZ"
-    except:
-        pass
-
+    # 5. 兜底返回原输入
     return user_input
 
 
@@ -108,7 +96,7 @@ def get_stock_data(symbol, days):
     return None
 
 
-# ==================== 技术指标 ====================
+# ==================== 技术指标（保持完整）===================
 def calculate_macd(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
@@ -164,7 +152,7 @@ with st.sidebar:
     compare_mode = st.checkbox("开启多只股票对比模式", value=False)
   
     if not compare_mode:
-        user_input = st.text_input("股票名称或代码", value="600396", help="最推荐：输入6位代码")
+        user_input = st.text_input("股票名称或代码", value="600396", help="最稳妥：输入6位代码")
         days = st.slider("分析天数", min_value=5, max_value=180, value=30, step=1)
         analyze_button = st.button("🚀 开始短线专业分析", type="primary")
     else:
@@ -180,7 +168,7 @@ if not compare_mode and analyze_button and user_input:
             df = get_stock_data(symbol, days)
             
             if df is None or len(df) < 20:
-                st.error(f"无法获取 **{user_input}** 的数据\n\n**最稳妥方法**：直接输入6位股票代码")
+                st.error(f"无法获取 **{user_input}** 的数据\n\n**强烈建议**：直接输入6位股票代码")
                 st.stop()
 
             df = df.ffill()
@@ -204,7 +192,7 @@ if not compare_mode and analyze_button and user_input:
             rs = gain / loss
             df['RSI'] = 100 - (100 / (1 + rs.fillna(0)))
 
-            # 量价分析
+            # 量价
             vol_mean = df['Volume'].mean()
             vol_std = df['Volume'].std()
             df['Volume_Ratio'] = df['Volume'] / vol_mean
@@ -231,7 +219,7 @@ if not compare_mode and analyze_button and user_input:
                     vp_types.append('量价中性')
             latest_vp = vp_types[-1] if vp_types else '量价中性'
 
-            # 100分评分
+            # 评分
             score = 50.0
             if latest['Close'] > latest['MA5']: score += 8
             if latest['Close'] > latest['MA10']: score += 7
@@ -253,9 +241,9 @@ if not compare_mode and analyze_button and user_input:
                               row_heights=[0.22, 0.16, 0.16, 0.16, 0.15, 0.15], vertical_spacing=0.04)
 
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='收盘价', line=dict(width=2.5)), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='布林上轨', line=dict(dash='dot')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='布林中轨', line=dict(dash='dot')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='布林下轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name='上轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Middle'], name='中轨', line=dict(dash='dot')), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name='下轨', line=dict(dash='dot')), row=1, col=1)
 
             fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='DIF'), row=2, col=1)
             fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='DEA'), row=2, col=1)
@@ -268,17 +256,17 @@ if not compare_mode and analyze_button and user_input:
             fig.add_hline(y=80, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=20, line_dash="dash", line_color="green", row=3, col=1)
 
-            fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY(12)', line=dict(color='orange')), row=4, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI(14)', line=dict(color='purple')), row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['PSY'], name='PSY', line=dict(color='orange')), row=4, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['CCI'], name='CCI', line=dict(color='purple')), row=4, col=1)
 
             fig.add_trace(go.Scatter(x=df.index, y=df['OBV'], name='OBV', line=dict(color='purple')), row=5, col=1)
             fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='成交量', marker_color='skyblue'), row=5, col=1)
 
-            fig.add_trace(go.Scatter(x=df.index, y=df['WR'], name='WR(14)', line=dict(color='brown')), row=6, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['WR'], name='WR', line=dict(color='brown')), row=6, col=1)
             fig.add_hline(y=-20, line_dash="dash", line_color="red", row=6, col=1)
             fig.add_hline(y=-80, line_dash="dash", line_color="green", row=6, col=1)
 
-            fig.update_layout(height=1550, title_text=f"{user_input}（{symbol}） 短线综合分析")
+            fig.update_layout(height=1550, title_text=f"{user_input}（{symbol}） 短线分析")
             st.plotly_chart(fig, use_container_width=True)
 
             # ==================== 报告 ====================
@@ -306,15 +294,15 @@ if not compare_mode and analyze_button and user_input:
 
             st.subheader("💡 短线操作建议")
             if final_score >= 78:
-                st.success("🔥 **强烈短线买入** - 多指标共振")
+                st.success("🔥 **强烈短线买入**")
             elif final_score >= 65:
                 st.success("✅ **可短线参与**")
             elif final_score >= 50:
-                st.info("🟡 **观望等待更好时机**")
+                st.info("🟡 **观望**")
             else:
-                st.error("❌ **短期风险较高，建议暂不操作**")
+                st.error("❌ **建议暂不操作**")
 
         except Exception as e:
-            st.error(f"分析失败: {str(e)[:150]}")
+            st.error(f"分析失败: {str(e)[:120]}")
 
-st.caption("短线专业版 | 新浪在线检索 + akshare | 推荐输入6位代码 | 仅供参考")
+st.caption("短线专业版 | 强化名称检索 | 推荐输入6位代码 | 仅供参考")
